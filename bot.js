@@ -1,6 +1,5 @@
-// AFK Bedrock Bot for Aternos - works on Linux (Render / VPS) using bedrock-protocol
-// Use .env for config
-
+// Simple AFK Bedrock join bot (uses bedrock-protocol from GitHub)
+// Requires environment variables or .env file
 require('dotenv').config();
 const bp = require('bedrock-protocol');
 
@@ -11,64 +10,50 @@ const VERSION = process.env.VERSION || '1.21.124';
 const RECONNECT_DELAY_MS = parseInt(process.env.RECONNECT_DELAY_MS || '5000', 10);
 
 let client = null;
-let reconnectAttempts = 0;
-let reconnectTimer = null;
+let afkInterval = null;
+let reconnectTimeout = null;
+let attempts = 0;
 
-function createAndStart() {
-  console.log(`[bot] starting bot -> ${USERNAME}@${HOST}:${PORT} (ver ${VERSION})`);
+function log(...args){ console.log(new Date().toISOString(), ...args) }
+
+function start() {
+  log('[bot] starting ->', `${USERNAME}@${HOST}:${PORT} ver=${VERSION}`);
   client = bp.createClient({
     host: HOST,
     port: PORT,
     username: USERNAME,
-    offline: true,          // offline mode (works for many Bedrock servers); if using floodgate/usernames change accordingly
+    offline: true,     // offline true usually works for Aternos + Floodgate setups
     version: VERSION,
     keepAliveInterval: 10000
   });
 
-  client.on('connect', () => {
-    console.log('[bot] connected (socket)');
-  });
-
+  client.on('connect', () => log('[bot] socket connected'));
   client.on('join', () => {
-    reconnectAttempts = 0;
-    console.log('[bot] joined server as real player');
-    startAFKLoop();
+    attempts = 0;
+    log('[bot] joined server — spawning AFK loop');
+    startAfkLoop();
   });
 
-  client.on('spawn', () => {
-    console.log('[bot] spawn event');
+  client.on('spawn', () => log('[bot] spawn event'));
+  client.on('despawn', () => log('[bot] despawn'));
+  client.on('kick', (r) => {
+    try { log('[bot] kicked:', r.toString()); } catch(e){ log('[bot] kicked (raw)'); }
   });
 
-  client.on('despawn', () => {
-    console.log('[bot] despawned');
-  });
-
-  client.on('kick', (reason) => {
-    try {
-      console.log('[bot] kicked:', reason.toString());
-    } catch (e) { console.log('[bot] kicked (raw)'); }
-  });
-
-  client.on('error', (err) => {
-    console.error('[bot] error:', err && err.message ? err.message : err);
-  });
-
-  client.on('close', (reason) => {
-    console.log('[bot] connection closed', reason ? reason.toString() : '');
-    stopAFKLoop();
+  client.on('error', (err) => log('[bot] error:', err && err.message ? err.message : err));
+  client.on('close', () => {
+    log('[bot] connection closed');
+    stopAfkLoop();
     scheduleReconnect();
   });
 }
 
-let afkInterval = null;
-function startAFKLoop() {
+function startAfkLoop(){
   if (afkInterval) return;
-  // We'll send small movement / head rotation packets so server thinks player is active.
+  // Every 3 seconds send lightweight movement/auth input that many MCPE servers accept.
   afkInterval = setInterval(() => {
     try {
-      // write move_player or play_status packets - bedrock expects specific runtime_id etc.
-      // bedrock-protocol offers send move_player; use player_move? We'll use play_status and movement-lite approach.
-      // Use "player_auth_input" or "move_player" patterns may vary by version; this approach is lightweight and commonly works:
+      // move_player packet: lightweight pulses to simulate activity.
       client.write('move_player', {
         runtime_id: client.entityId || 1,
         position: { x: 0, y: 70, z: 0 },
@@ -79,50 +64,53 @@ function startAFKLoop() {
         on_ground: true,
         teleport: false
       });
-      // also send a small keepalive-like packet
-      client.write('player_auth_input', {
-        motion: { x: 0, y: 0, z: 0 },
-        yaw: Math.random() * 360,
-        pitch: 0,
-        head_yaw: Math.random() * 360,
-        tick: Date.now() % 100000
-      });
-      console.log('[bot] activity packet sent');
-    } catch (e) {
-      // some servers may reject specific packets, ignore and continue
-      console.warn('[bot] activity write error', e && e.message ? e.message : e);
+      // player_auth_input: if supported, sends tick/rotation so server sees activity
+      if (client.write && client.writeRaw) {
+        try {
+          client.write('player_auth_input', {
+            motion: { x: 0, y: 0, z: 0 },
+            yaw: Math.random() * 360,
+            pitch: 0,
+            head_yaw: Math.random() * 360,
+            tick: Date.now() % 100000
+          });
+        } catch(e){}
+      }
+      log('[bot] activity packet sent');
+    } catch(e){
+      log('[bot] activity send error:', e && e.message ? e.message : e);
     }
-  }, 3000); // every 3s
+  }, 3000);
 }
 
-function stopAFKLoop() {
+function stopAfkLoop(){
   if (!afkInterval) return;
   clearInterval(afkInterval);
   afkInterval = null;
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer) return;
-  reconnectAttempts++;
-  const delay = Math.min(RECONNECT_DELAY_MS * reconnectAttempts, 60000); // cap 60s
-  console.log(`[bot] reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    createAndStart();
+function scheduleReconnect(){
+  if (reconnectTimeout) return;
+  attempts++;
+  const delay = Math.min(RECONNECT_DELAY_MS * attempts, 60000);
+  log(`[bot] reconnecting in ${delay}ms (attempt ${attempts})`);
+  reconnectTimeout = setTimeout(() => {
+    reconnectTimeout = null;
+    start();
   }, delay);
 }
 
-// start first time
-createAndStart();
+// Start
+start();
 
-// handle graceful shutdown
+// Graceful shutdown
 process.on('SIGINT', () => {
-  console.log('[bot] SIGINT, exiting');
-  if (client) client.close();
+  log('[bot] SIGINT, shutting down');
+  try { if (client) client.close(); } catch(e){}
   process.exit(0);
 });
 process.on('SIGTERM', () => {
-  console.log('[bot] SIGTERM, exiting');
-  if (client) client.close();
+  log('[bot] SIGTERM, shutting down');
+  try { if (client) client.close(); } catch(e){}
   process.exit(0);
 });
