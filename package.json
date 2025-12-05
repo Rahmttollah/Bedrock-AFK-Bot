@@ -1,14 +1,14 @@
 {
   "name": "aternos-bedrock-afk",
   "version": "1.0.0",
-  "description": "AFK bot for Aternos Bedrock (1.21.124.x) - runs on Render / Linux",
+  "description": "Simple AFK Bedrock join bot (uses bedrock-protocol from GitHub)",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "postinstall": "node ./scripts/postinstall.js || true"
+    "start": "node bot.js"
   },
   "dependencies": {
-    "bedrock-protocol": "^2.29.0",
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.0.0",
+    "buffer": "^6.0.3",
+    "bedrock-protocol": "git+https://github.com/PrismarineJS/bedrock-protocol.git"
   }
 }
