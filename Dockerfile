@@ -1,7 +1,5 @@
-# Use node base image that supports building native modules
 FROM node:20-bullseye
 
-# Install build deps for native modules
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -12,15 +10,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# copy package files first (cache npm install)
 COPY package.json package-lock.json* ./
 
-# install deps (will build raknet-native inside)
+# Install deps (this will build native bits)
 RUN npm install --production
 
-# copy rest
 COPY . .
 
-EXPOSE 3000
-
+ENV NODE_ENV=production
 CMD ["node", "bot.js"]
